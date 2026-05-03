@@ -13,7 +13,6 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 
-# DB session handler
 def get_db():
     db = SessionLocal()
     try:
@@ -22,18 +21,15 @@ def get_db():
         db.close()
 
 
-# Home UI
 @app.get("/", response_class=HTMLResponse)
 def home():
     with open("index.html") as f:
         return f.read()
 
 
-# Ingestion API
 @app.post("/ingest")
 def ingest_event(event: dict, simulate_failure: bool = False, db: Session = Depends(get_db)):
 
-    # Store raw event
     raw_event = models.RawEvent(
         id=str(uuid.uuid4()),
         payload=event
@@ -44,7 +40,6 @@ def ingest_event(event: dict, simulate_failure: bool = False, db: Session = Depe
     event_hash = generate_hash(normalized)
 
     try:
-        # Idempotency gate
         state = models.ProcessingState(
             event_hash=event_hash,
             status="processing",
@@ -93,21 +88,27 @@ def ingest_event(event: dict, simulate_failure: bool = False, db: Session = Depe
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Aggregation API
 @app.get("/aggregate")
 def aggregate(db: Session = Depends(get_db)):
     events = db.query(models.ProcessedEvent).all()
 
-    total_amount = sum(e.amount for e in events)
-    count = len(events)
-
     return {
-        "total_amount": total_amount,
-        "count": count
+        "total_amount": sum(e.amount for e in events),
+        "count": len(events)
     }
 
 
-# Debug APIs
+@app.get("/metrics")
+def metrics(db: Session = Depends(get_db)):
+    processed = db.query(models.ProcessedEvent).count()
+    failed = db.query(models.ProcessingState).filter_by(status="failed").count()
+
+    return {
+        "processed": processed,
+        "failed": failed
+    }
+
+
 @app.get("/events/processed")
 def get_processed(db: Session = Depends(get_db)):
     return db.query(models.ProcessedEvent).all()
