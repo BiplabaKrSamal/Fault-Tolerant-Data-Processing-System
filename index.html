@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+    <title>Live Event Dashboard</title>
+
+```
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+    body { font-family: Arial; margin: 40px; background: #f5f7fa; }
+    h1 { color: #333; }
+
+    .card {
+        background: white;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    textarea { width: 100%; height: 120px; }
+
+    button {
+        padding: 8px 16px;
+        background: #1890ff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+    }
+
+    .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
+    pre {
+        background: #f0f0f0;
+        padding: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .live { color: green; }
+    .paused { color: red; }
+
+    canvas {
+        max-height: 300px;
+    }
+</style>
+```
+
+</head>
+
+<body>
+
+<h1>📊 SaaS-Style Live Event Dashboard</h1>
+
+<div>
+    <span id="statusIndicator" class="live">🟢 Live</span> |
+    Last Updated: <span id="lastUpdated">--</span>
+</div>
+
+<!-- Charts -->
+
+<div class="grid">
+
+```
+<div class="card">
+    <h3>📈 Events/sec (Live)</h3>
+    <canvas id="rateChart"></canvas>
+</div>
+
+<div class="card">
+    <h3>📊 Processed vs Failed</h3>
+    <canvas id="statusChart"></canvas>
+</div>
+```
+
+</div>
+
+<div class="card">
+    <h3>Submit Event</h3>
+    <textarea id="eventInput">
+{
+  "source": "client_A",
+  "payload": {
+    "metric": "sales",
+    "amount": "1200",
+    "timestamp": "2024/01/01"
+  }
+}
+    </textarea>
+
+```
+<br><br>
+
+<label>
+    <input type="checkbox" id="failToggle">
+    Simulate Failure
+</label>
+
+<br><br>
+<button onclick="submitEvent()">Submit</button>
+<p id="response"></p>
+```
+
+</div>
+
+<div class="grid">
+    <div class="card">
+        <h3>✅ Processed</h3>
+        <pre id="processed"></pre>
+    </div>
+
+```
+<div class="card">
+    <h3>❌ Failed</h3>
+    <pre id="failed"></pre>
+</div>
+```
+
+</div>
+
+<div class="card">
+    <h3>📊 Aggregation</h3>
+    <pre id="aggregate"></pre>
+</div>
+
+<script>
+let active = true;
+let lastProcessed = 0;
+let lastTime = Date.now();
+
+// Chart Data
+let rateData = [];
+let labels = [];
+
+// Rate Chart
+const rateChart = new Chart(document.getElementById("rateChart"), {
+    type: 'line',
+    data: {
+        labels: labels,
+        datasets: [{
+            label: 'Events/sec',
+            data: rateData
+        }]
+    },
+    options: {
+        responsive: true
+    }
+});
+
+// Status Chart
+const statusChart = new Chart(document.getElementById("statusChart"), {
+    type: 'bar',
+    data: {
+        labels: ['Processed', 'Failed'],
+        datasets: [{
+            label: 'Events',
+            data: [0, 0]
+        }]
+    },
+    options: {
+        responsive: true
+    }
+});
+
+async function submitEvent() {
+    const input = document.getElementById("eventInput").value;
+    const fail = document.getElementById("failToggle").checked;
+
+    const res = await fetch(`/ingest?simulate_failure=${fail}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: input
+    });
+
+    const data = await res.json();
+    document.getElementById("response").innerText = JSON.stringify(data);
+}
+
+async function refresh() {
+    if (!active) return;
+
+    const [p, f, a, m] = await Promise.all([
+        fetch("/events/processed").then(r => r.json()),
+        fetch("/events/failed").then(r => r.json()),
+        fetch("/aggregate").then(r => r.json()),
+        fetch("/metrics").then(r => r.json())
+    ]);
+
+    document.getElementById("processed").textContent = JSON.stringify(p, null, 2);
+    document.getElementById("failed").textContent = JSON.stringify(f, null, 2);
+    document.getElementById("aggregate").textContent = JSON.stringify(a, null, 2);
+
+    // Calculate rate
+    const now = Date.now();
+    const timeDiff = (now - lastTime) / 1000;
+
+    const rate = timeDiff > 0
+        ? ((m.processed - lastProcessed) / timeDiff).toFixed(2)
+        : 0;
+
+    lastProcessed = m.processed;
+    lastTime = now;
+
+    // Update rate chart
+    rateData.push(rate);
+    labels.push(new Date().toLocaleTimeString());
+
+    if (rateData.length > 10) {
+        rateData.shift();
+        labels.shift();
+    }
+
+    rateChart.update();
+
+    // Update status chart
+    statusChart.data.datasets[0].data = [m.processed, m.failed];
+    statusChart.update();
+
+    document.getElementById("lastUpdated").textContent =
+        new Date().toLocaleTimeString();
+}
+
+setInterval(refresh, 3000);
+refresh();
+
+document.addEventListener("visibilitychange", () => {
+    active = !document.hidden;
+    document.getElementById("statusIndicator").className = active ? "live" : "paused";
+    document.getElementById("statusIndicator").innerText = active ? "🟢 Live" : "🔴 Paused";
+});
+</script>
+
+</body>
+</html>
